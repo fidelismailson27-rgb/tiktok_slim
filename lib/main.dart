@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-// Importação obrigatória para acessar APIs nativas do Android no nível de produção
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 void main() {
@@ -25,7 +24,6 @@ class _TikTokSlimState extends State<TikTokSlim> {
   void initState() {
     super.initState();
 
-    // Factory Pattern: Inicializa o controlador com base nas especificações da plataforma
     late final PlatformWebViewControllerCreationParams params;
     if (WebViewPlatform.instance is AndroidWebViewPlatform) {
       params = AndroidWebViewControllerCreationParams();
@@ -35,24 +33,25 @@ class _TikTokSlimState extends State<TikTokSlim> {
 
     final WebViewController controller = WebViewController.fromPlatformCreationParams(params);
 
+    if (controller.platform is AndroidWebViewController) {
+      AndroidWebViewController androidController = controller.platform as AndroidWebViewController;
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+    }
+
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      // Define fundo branco inicialmente para mitigar o artefato visual de alocação da GPU
-      ..setBackgroundColor(const Color(0xFFFFFFFF))
+      ..setBackgroundColor(const Color(0xFF000000))
       ..setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (url) => _applyAutoLayout(controller),
         ),
-      )
-      ..loadRequest(Uri.parse('https://www.tiktok.com/explore'));
+      );
 
-    // Configurações Críticas (Nível de Produção) exclusivas para Android
-    if (controller.platform is AndroidWebViewController) {
-      AndroidWebViewController androidController = controller.platform as AndroidWebViewController;
-      // Impede que o TikTok trave a renderização do DOM aguardando interação do usuário para mídia
-      androidController.setMediaPlaybackRequiresUserGesture(false);
-    }
+    // Limpeza rigorosa: força a rede e evita tentar carregar erros da sessão anterior
+    controller.clearCache().then((_) {
+      controller.loadRequest(Uri.parse('https://www.tiktok.com/explore'));
+    });
 
     _controller = controller;
   }
