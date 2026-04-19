@@ -41,61 +41,72 @@ class _TikTokSlimState extends State<TikTokSlim> {
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF000000))
-      // MUDANÇA CRÍTICA: User-Agent Mobile Android para requisitar a UI nativa
       ..setUserAgent("Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (url) => _applyMobileLayout(controller),
+          onNavigationRequest: (NavigationRequest request) {
+            // FIREWALL DE REDE: Impede o TikTok de forçar o uso do app nativo.
+            // O bloqueio de URLs do tipo "intent://" evita o crash do WebView (Logotipo do Android)
+            if (!request.url.startsWith('http://') && !request.url.startsWith('https://')) {
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+          onPageFinished: (url) => _applyAntiModalHeuristics(controller),
         ),
       );
 
     controller.clearCache().then((_) {
-      // Direciona direto para o feed raiz
-      controller.loadRequest(Uri.parse('https://www.tiktok.com/'));
+      // Injeta param url para forçar tema escuro nativamente se suportado
+      controller.loadRequest(Uri.parse('https://www.tiktok.com/?theme=dark'));
     });
 
     _controller = controller;
   }
 
-  void _applyMobileLayout(WebViewController controller) {
-    // Injeção de código para neutralizar os bloqueadores da versão Mobile Web
+  void _applyAntiModalHeuristics(WebViewController controller) {
     controller.runJavaScript("""
       (function() {
         var style = document.createElement('style');
         style.innerHTML = `
-          /* Elimina Banners de "Abrir no App" e Cookie popups */
-          div[class*='DivAppBanner'], 
-          div[class*='DivDownloadBanner'], 
-          div[class*='DivModalContainer'], 
-          div[class*='DivOpenApp'],
-          div[id^='app-banner'],
-          .tiktok-cookie-banner,
-          [data-e2e="bottom-app-banner"] { 
+          /* Bloqueio de seletores mapeados de Banners e Paywalls */
+          [class*='bottom-app-banner'], 
+          [class*='login-modal'],
+          [class*='verify-modal'],
+          [id^='app-banner'] { 
             display: none !important; 
-            opacity: 0 !important; 
-            pointer-events: none !important; 
           }
           
-          /* Força a tela a ser interativa. O TikTok trava o 'overflow' quando tenta forçar o download */
+          /* Restaurando a interatividade da página de forma segura */
           html, body { 
             overflow: auto !important; 
             overflow-y: scroll !important; 
             height: 100% !important; 
-            position: static !important;
-            background-color: #000000 !important;
+            color-scheme: dark !important; 
+            background-color: #000000;
           }
         `;
         document.head.appendChild(style);
 
-        // Loop defensivo: SPA (Single Page Applications) carregam elementos via lazy-loading.
-        // Isso destrói os modais de bloqueio caso o React do TikTok tente renderizá-los após o scroll.
+        // Scanner cíclico de Overlays (Camadas fantasmas que escurecem a tela)
         setInterval(function() {
-          var modals = document.querySelectorAll("div[class*='DivModalContainer'], [class*='bottom-app-banner']");
-          modals.forEach(function(el) { el.remove(); });
+          // Captura elementos com z-index alto que atuam como fundo do login/cadastro
+          var overlays = document.querySelectorAll('div, section');
+          overlays.forEach(function(el) {
+            var styles = window.getComputedStyle(el);
+            if (styles.position === 'fixed' && parseInt(styles.zIndex) >= 90) {
+              // Se tiver uma camada transparente alta cobrindo a tela (ex: rgba(0,0,0,0.5)), apaga.
+              if (styles.backgroundColor.includes('rgba') || styles.opacity < 1) {
+                el.style.display = 'none';
+              }
+            }
+          });
           
-          // Garante que o scroll do body nunca seja bloqueado
-          document.body.style.overflow = 'auto';
-        }, 1500);
+          // Tratativa final para manter o scroll do usuário destravado
+          if (document.body.style.overflow === 'hidden') {
+              document.body.style.overflow = 'auto';
+          }
+        }, 1000);
       })();
     """);
   }
@@ -105,6 +116,7 @@ class _TikTokSlimState extends State<TikTokSlim> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
+        // Impede que o notch/furo da câmera corte conteúdo importante no topo
         child: WebViewWidget(controller: _controller),
       ),
     );
