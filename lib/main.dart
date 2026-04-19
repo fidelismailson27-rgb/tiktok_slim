@@ -41,42 +41,61 @@ class _TikTokSlimState extends State<TikTokSlim> {
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF000000))
-      ..setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+      // MUDANÇA CRÍTICA: User-Agent Mobile Android para requisitar a UI nativa
+      ..setUserAgent("Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (url) => _applyAutoLayout(controller),
+          onPageFinished: (url) => _applyMobileLayout(controller),
         ),
       );
 
-    // Limpeza rigorosa: força a rede e evita tentar carregar erros da sessão anterior
     controller.clearCache().then((_) {
-      controller.loadRequest(Uri.parse('https://www.tiktok.com/explore'));
+      // Direciona direto para o feed raiz
+      controller.loadRequest(Uri.parse('https://www.tiktok.com/'));
     });
 
     _controller = controller;
   }
 
-  void _applyAutoLayout(WebViewController controller) {
+  void _applyMobileLayout(WebViewController controller) {
+    // Injeção de código para neutralizar os bloqueadores da versão Mobile Web
     controller.runJavaScript("""
       (function() {
-        if (!document.querySelector('meta[name="viewport"]')) {
-          var meta = document.createElement('meta');
-          meta.name = 'viewport';
-          meta.content = 'width=device-width, initial-scale=0.7, maximum-scale=1.0, user-scalable=no';
-          document.getElementsByTagName('head')[0].appendChild(meta);
-        }
-
         var style = document.createElement('style');
         style.innerHTML = `
-          [class*='DivDownloadAppBanner'], 
-          [class*='ButtonDownloadApp'], 
-          [class*='DivHeaderContainer'],
-          .tiktok-footer, 
-          header, 
-          footer { display: none !important; }
-          body { overflow-x: hidden !important; background-color: #000000 !important; }
+          /* Elimina Banners de "Abrir no App" e Cookie popups */
+          div[class*='DivAppBanner'], 
+          div[class*='DivDownloadBanner'], 
+          div[class*='DivModalContainer'], 
+          div[class*='DivOpenApp'],
+          div[id^='app-banner'],
+          .tiktok-cookie-banner,
+          [data-e2e="bottom-app-banner"] { 
+            display: none !important; 
+            opacity: 0 !important; 
+            pointer-events: none !important; 
+          }
+          
+          /* Força a tela a ser interativa. O TikTok trava o 'overflow' quando tenta forçar o download */
+          html, body { 
+            overflow: auto !important; 
+            overflow-y: scroll !important; 
+            height: 100% !important; 
+            position: static !important;
+            background-color: #000000 !important;
+          }
         `;
         document.head.appendChild(style);
+
+        // Loop defensivo: SPA (Single Page Applications) carregam elementos via lazy-loading.
+        // Isso destrói os modais de bloqueio caso o React do TikTok tente renderizá-los após o scroll.
+        setInterval(function() {
+          var modals = document.querySelectorAll("div[class*='DivModalContainer'], [class*='bottom-app-banner']");
+          modals.forEach(function(el) { el.remove(); });
+          
+          // Garante que o scroll do body nunca seja bloqueado
+          document.body.style.overflow = 'auto';
+        }, 1500);
       })();
     """);
   }
