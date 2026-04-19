@@ -41,72 +41,105 @@ class _TikTokSlimState extends State<TikTokSlim> {
     controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF000000))
-      ..setUserAgent("Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36")
+      // ENGINE DE DESKTOP: Retornamos ao UA de PC. O Servidor libera o feed infinito para convidados.
+      ..setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (NavigationRequest request) {
-            // FIREWALL DE REDE: Impede o TikTok de forçar o uso do app nativo.
-            // O bloqueio de URLs do tipo "intent://" evita o crash do WebView (Logotipo do Android)
+            // FIREWALL DE REDE
             if (!request.url.startsWith('http://') && !request.url.startsWith('https://')) {
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
           },
-          onPageFinished: (url) => _applyAntiModalHeuristics(controller),
+          onPageFinished: (url) => _injectDesktopToMobileCSS(controller),
         ),
       );
 
     controller.clearCache().then((_) {
-      // Injeta param url para forçar tema escuro nativamente se suportado
-      controller.loadRequest(Uri.parse('https://www.tiktok.com/?theme=dark'));
+      // Força a entrada direta no feed principal
+      controller.loadRequest(Uri.parse('https://www.tiktok.com/foryou'));
     });
 
     _controller = controller;
   }
 
-  void _applyAntiModalHeuristics(WebViewController controller) {
+  // CORE DA SOLUÇÃO: Muta o layout Desktop para Mobile
+  void _injectDesktopToMobileCSS(WebViewController controller) {
     controller.runJavaScript("""
       (function() {
+        // 1. Adapta o Viewport do motor do navegador para proporção de celular
+        var meta = document.createElement('meta');
+        meta.name = 'viewport';
+        meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+        document.head.appendChild(meta);
+
+        // 2. Injeção Cirúrgica de CSS
         var style = document.createElement('style');
         style.innerHTML = `
-          /* Bloqueio de seletores mapeados de Banners e Paywalls */
-          [class*='bottom-app-banner'], 
+          /* Destrói Cabeçalho, Barra Lateral, Popups de Login e Banners */
+          [data-e2e="nav-container"], 
+          [data-e2e="top-wrapper"], 
+          [id^='header'],
           [class*='login-modal'],
-          [class*='verify-modal'],
-          [id^='app-banner'] { 
-            display: none !important; 
+          #app-header,
+          .tiktok-top-wrapper,
+          .tiktok-nav-container {
+            display: none !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
           }
-          
-          /* Restaurando a interatividade da página de forma segura */
-          html, body { 
-            overflow: auto !important; 
-            overflow-y: scroll !important; 
-            height: 100% !important; 
-            color-scheme: dark !important; 
-            background-color: #000000;
+
+          /* Força o contêiner central a ocupar toda a largura (100vw) */
+          [data-e2e="main-container"], 
+          #main-content-homepage_hot,
+          .tiktok-main-container {
+            width: 100vw !important;
+            max-width: 100vw !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background-color: #000000 !important;
+          }
+
+          /* Converte os blocos de vídeo para tela cheia com snap scroll (9:16) */
+          [data-e2e="recommend-list-item-container"],
+          .tiktok-recommend-list-item-container {
+            height: 100vh !important;
+            width: 100vw !important;
+            max-width: 100vw !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+          }
+
+          /* Remove as bordas do vídeo, forçando preenchimento via object-fit */
+          video {
+            object-fit: cover !important;
+            border-radius: 0 !important;
+          }
+
+          /* Oculta as barras de rolagem nativas para estética de App */
+          ::-webkit-scrollbar {
+            display: none !important;
+          }
+          html, body {
+            scrollbar-width: none !important;
+            overflow-x: hidden !important;
+            background-color: #000000 !important;
+            color-scheme: dark !important;
           }
         `;
         document.head.appendChild(style);
 
-        // Scanner cíclico de Overlays (Camadas fantasmas que escurecem a tela)
+        // 3. Destruidor cíclico de camadas intrusivas remanescentes
         setInterval(function() {
-          // Captura elementos com z-index alto que atuam como fundo do login/cadastro
-          var overlays = document.querySelectorAll('div, section');
-          overlays.forEach(function(el) {
-            var styles = window.getComputedStyle(el);
-            if (styles.position === 'fixed' && parseInt(styles.zIndex) >= 90) {
-              // Se tiver uma camada transparente alta cobrindo a tela (ex: rgba(0,0,0,0.5)), apaga.
-              if (styles.backgroundColor.includes('rgba') || styles.opacity < 1) {
-                el.style.display = 'none';
-              }
-            }
-          });
+          var modals = document.querySelectorAll('[data-e2e="login-modal"], div[class*="DivModalContainer"]');
+          modals.forEach(m => m.remove());
           
-          // Tratativa final para manter o scroll do usuário destravado
-          if (document.body.style.overflow === 'hidden') {
-              document.body.style.overflow = 'auto';
+          if(document.body.style.overflow === 'hidden') {
+             document.body.style.overflow = 'auto';
           }
-        }, 1000);
+        }, 1500);
       })();
     """);
   }
@@ -116,7 +149,6 @@ class _TikTokSlimState extends State<TikTokSlim> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        // Impede que o notch/furo da câmera corte conteúdo importante no topo
         child: WebViewWidget(controller: _controller),
       ),
     );
