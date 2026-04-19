@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+// Importação obrigatória para acessar APIs nativas do Android no nível de produção
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,25 +24,41 @@ class _TikTokSlimState extends State<TikTokSlim> {
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
+
+    // Factory Pattern: Inicializa o controlador com base nas especificações da plataforma
+    late final PlatformWebViewControllerCreationParams params;
+    if (WebViewPlatform.instance is AndroidWebViewPlatform) {
+      params = AndroidWebViewControllerCreationParams();
+    } else {
+      params = const PlatformWebViewControllerCreationParams();
+    }
+
+    final WebViewController controller = WebViewController.fromPlatformCreationParams(params);
+
+    controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
-      // Bypass do bloqueio mobile simulando Chrome no Windows
+      // Define fundo branco inicialmente para mitigar o artefato visual de alocação da GPU
+      ..setBackgroundColor(const Color(0xFFFFFFFF))
       ..setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (url) => _applyAutoLayout(),
+          onPageFinished: (url) => _applyAutoLayout(controller),
         ),
       )
       ..loadRequest(Uri.parse('https://www.tiktok.com/explore'));
+
+    // Configurações Críticas (Nível de Produção) exclusivas para Android
+    if (controller.platform is AndroidWebViewController) {
+      AndroidWebViewController androidController = controller.platform as AndroidWebViewController;
+      // Impede que o TikTok trave a renderização do DOM aguardando interação do usuário para mídia
+      androidController.setMediaPlaybackRequiresUserGesture(false);
+    }
+
+    _controller = controller;
   }
 
-  void _applyAutoLayout() {
-    // Automação: 
-    // 1. Injeta meta tag de viewport para permitir zoom via código.
-    // 2. Ajusta escala para 0.7 (adapta layout desktop para largura mobile).
-    // 3. Oculta elementos pesados e banners de download.
-    _controller.runJavaScript("""
+  void _applyAutoLayout(WebViewController controller) {
+    controller.runJavaScript("""
       (function() {
         if (!document.querySelector('meta[name="viewport"]')) {
           var meta = document.createElement('meta');
@@ -57,7 +75,7 @@ class _TikTokSlimState extends State<TikTokSlim> {
           .tiktok-footer, 
           header, 
           footer { display: none !important; }
-          body { overflow-x: hidden !important; }
+          body { overflow-x: hidden !important; background-color: #000000 !important; }
         `;
         document.head.appendChild(style);
       })();
